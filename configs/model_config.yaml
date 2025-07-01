@@ -1,0 +1,99 @@
+# configs/model_config.yaml
+
+# --- 1. 模型架构配置 (Model Architecture Configuration) ---
+# -------------------------------------------------
+# 指定要使用的预训练模型 (从Hugging Face Hub)
+
+# 语音编码器 (Speech Encoder)
+# 负责从音频中提取声学和语义特征
+speech_encoder: "openai/whisper-large-v3"
+freeze_speech_encoder: true  # 强烈建议冻结，以节省大量显存和计算资源
+
+# 说话人编码器 (Speaker Encoder)
+# 负责提取能区分说话人身份的特征
+speaker_encoder: "pyannote/embedding"
+# 通常也保持冻结，因为它已经是预训练好的
+freeze_speaker_encoder: true
+
+# 大语言模型基座 (LLM Backbone)
+# 负责理解指令和声学特征，并生成文本
+# 建议选择指令微调过的版本
+llm_backbone: "Qwen/Qwen2-1.5B-Instruct" # 示例，可替换为 Qwen2, Llama-3, Gemma 等
+
+# --- 2. 适配器与微调策略 (Adapter & Finetuning Strategy) ---
+# -------------------------------------------------
+# 模态适配器 (Modality Adaptor)
+# 将语音特征投影到LLM的词嵌入空间
+# 这个维度必须与LLM的隐藏层维度一致 (e.g., Llama-2-7b 是 4096、Qwen2-1.5B 的隐藏层维度是 1536)
+adapter_output_dim: 1536 
+
+# 高效参数微调 (PEFT - LoRA) 配置
+# 是否启用LoRA微调LLM
+use_lora: true
+# LoRA的秩 (rank)，是关键超参数，通常在 8, 16, 32, 64 中选择
+lora_r: 16
+# LoRA的缩放因子，通常设为 r 的两倍
+lora_alpha: 32
+# LoRA层的dropout率
+lora_dropout: 0.05
+# 指定要应用LoRA的LLM模块，通常是注意力机制中的线性层
+lora_target_modules:
+  - "q_proj"
+  - "v_proj"
+  # - "k_proj"  # 有时也加入k_proj
+  # - "o_proj"  # 有时也加入o_proj
+
+# --- 3. 训练超参数 (Training Hyperparameters) ---
+# -------------------------------------------------
+# 训练的总轮数
+num_epochs: 3
+
+# 每个设备上的批次大小 (Batch Size per device)
+# 需要根据你的GPU显存大小进行调整
+batch_size_per_device: 2
+
+# 梯度累积步数
+# 有效批次大小 = batch_size_per_device * num_gpus * gradient_accumulation_steps
+# 用于在显存不足时模拟大batch size
+gradient_accumulation_steps: 8
+
+# 优化器 (Optimizer)
+optimizer: "AdamW" # AdamW 是目前Transformer模型的标配
+
+# 学习率 (Learning Rate)
+# 这是最重要的超参数之一，需要仔细调整
+learning_rate: 1.0e-4
+
+# 学习率调度器 (Learning Rate Scheduler)
+# "cosine", "linear", "constant"
+lr_scheduler_type: "cosine"
+# 在多少步内从0预热到learning_rate
+num_warmup_steps: 500
+
+# 权重衰减 (Weight Decay)，防止过拟合
+weight_decay: 0.01
+
+# 梯度裁剪 (Gradient Clipping)，防止梯度爆炸
+max_grad_norm: 1.0
+
+# --- 4. 推理配置 (Inference Configuration) ---
+# -------------------------------------------------
+# 生成文本时的最大长度
+max_new_tokens: 256
+
+# Beam Search 的宽度
+num_beams: 1 # 设为1表示使用Greedy Search，速度最快。可设为3或5进行Beam Search
+
+# --- 5. 日志与保存配置 (Logging & Saving Configuration) ---
+# -------------------------------------------------
+# 训练结果和模型权重的输出目录
+output_dir: "experiments/run_01"
+
+# 每隔多少步记录一次日志 (loss等)
+logging_steps: 10
+
+# 每隔多少步保存一次模型权重 (checkpoint)
+save_steps: 500
+
+# 最多保存多少个checkpoint
+save_total_limit: 3
