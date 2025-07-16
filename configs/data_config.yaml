@@ -1,0 +1,46 @@
+# configs/data_config.yaml
+
+# --- 1. 路径配置 (Path Configuration) ---
+# -------------------------------------------------
+# 原始音频文件所在的目录
+raw_audio_dir: "data/raw_audio/"
+
+# 存放所有预处理结果的根目录
+processed_dir: "data/processed/"
+
+# 核心元数据文件的完整路径 (由 preprocessor.py 生成)
+metadata_path: "data/processed/metadata.jsonl"
+
+# 存放说话人嵌入向量的目录 (由 preprocessor.py 生成)
+speaker_embeddings_dir: "data/processed/speaker_embeddings/"
+
+
+# --- 2. 音频预处理参数 (Audio Preprocessing Parameters) ---
+# -------------------------------------------------
+# 目标采样率，所有音频都会被重采样到这个值
+sample_rate: 16000
+
+# pyannote.audio Diarization 参数
+# 过滤掉时长小于此值（秒）的语音片段，以减少噪声和无效片段
+min_segment_duration_s: 0.5
+
+
+# --- 3. 数据集与数据加载器配置 (Dataset & DataLoader Configuration) ---
+# -------------------------------------------------
+# 用于训练、验证、测试集划分的比例或文件列表
+# 简单起见，我们先用比例划分。未来可以改成指定文件列表。
+# 例如: train_files: ["class_01.wav", "class_02.wav"]
+split_ratios:
+  train: 0.8
+  validation: 0.1
+  test: 0.1 # test集可以为0，如果所有数据都用于训练和验证
+
+# 随机种子，用于复现数据集的划分
+dataset_split_seed: 42
+
+# 数据加载器的工作进程数，可以加速数据加载
+# Windows下建议设为0，Linux下可以设为CPU核心数的一半左右
+num_workers: 4
+
+# 是否在每个epoch开始时打乱数据顺序
+shuffle_data: true
