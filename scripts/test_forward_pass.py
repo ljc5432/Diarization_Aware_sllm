@@ -69,7 +69,16 @@ def main():
             batch = next(iter(dataloader))
             
             # 将批次数据移动到与模型相同的设备 (CPU)
-            batch_on_device = {k: v.to('cpu') if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+            batch_on_device = {}
+            for k, v in batch.items():
+                if isinstance(v, torch.Tensor):
+                    batch_on_device[k] = v.to('cpu')
+                elif isinstance(v, list) and all(isinstance(i, torch.Tensor) for i in v):
+                    # 处理 speaker_embeddings_list
+                    batch_on_device[k] = [t.to('cpu') for t in v]
+                else:
+                    # 处理 triplets_list
+                    batch_on_device[k] = v
             
             # 执行模型的前向传播
             outputs = model(**batch_on_device)

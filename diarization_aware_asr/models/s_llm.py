@@ -6,6 +6,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, WhisperFeatureExtr
 from torch.nn.utils.rnn import pad_sequence
 from peft import get_peft_model, LoraConfig, TaskType
 from typing import List, Dict, Any
+from .components import GatedCrossAttention
 
 class ModalityAdapter(nn.Module):
     """一个简单的MLP，用于将音频特征投影到LLM的嵌入维度。"""
@@ -52,6 +53,11 @@ class DiarizationAwareSLLM(nn.Module):
         for param in self.llm.parameters():
             param.requires_grad = False
 
+        # --- 实例化新模块 ---
+        # Whisper-large-v3 encoder 输出维度是 1280
+        # pyannote/embedding 输出维度是 512
+        self.gated_attention = GatedCrossAttention(speech_dim=1280, speaker_dim=512)
+
         # 6. 初始化新模块 (模态适配器)
         # Whisper-large-v3的encoder输出维度是1280
         self.adapter = ModalityAdapter(1280, self.config['adapter_output_dim'])
@@ -74,7 +80,8 @@ class DiarizationAwareSLLM(nn.Module):
             self.llm.print_trainable_parameters()
 
     def forward(self, prompt_ids: torch.Tensor, label_ids: torch.Tensor, 
-                  audio_features: torch.Tensor, triplets_list: List[List[Dict[str, Any]]]):
+                  audio_features: torch.Tensor, triplets_list: List[List[Dict[str, Any]]],
+                  speaker_embeddings_list: List[torch.Tensor]):
         
         # 1. 获取文本部分的词嵌入
         word_embeddings = self.llm.get_input_embeddings()
@@ -90,13 +97,15 @@ class DiarizationAwareSLLM(nn.Module):
             current_label_ids = label_ids[i]
             current_audio_features = audio_features[i]
             current_triplets = triplets_list[i]
+            current_speaker_embeds = speaker_embeddings_list[i] # <--- 获取当前样本的说话人嵌入
 
             # --- 提取并投影音频特征 ---
             with torch.no_grad():
                 # 注意：这里我们假设 speech_encoder.encoder 的输入不需要 padding mask
                 # 对于 Whisper Encoder，通常是这样
                 encoder_output = self.speech_encoder.encoder(current_audio_features.unsqueeze(0)).last_hidden_state.squeeze(0)
-            projected_audio_embeds = self.adapter(encoder_output)
+            
+            # projected_audio_embeds = self.adapter(encoder_output)
 
             # --- 查找 <audio_chunk> 的位置 ---
             audio_chunk_indices_in_prompt = torch.where(current_prompt_ids == self.audio_chunk_token_id)[0]
@@ -119,11 +128,32 @@ class DiarizationAwareSLLM(nn.Module):
                 start_frame = int(triplet['start'] / audio_time_per_feature)
                 end_frame = int(triplet['end'] / audio_time_per_feature)
                 # 确保裁剪不越界
-                if end_frame > projected_audio_embeds.shape[0]:
-                    end_frame = projected_audio_embeds.shape[0]
-                audio_segment_embeds = projected_audio_embeds[start_frame:end_frame]
-                current_input_embeds_parts.append(audio_segment_embeds)
-                current_labels_parts.append(torch.full((audio_segment_embeds.shape[0],), -100, dtype=torch.long, device=prompt_ids.device))
+                if end_frame > encoder_output.shape[0]:
+                    end_frame = encoder_output.shape[0]
+                # audio_segment_embeds = projected_audio_embeds[start_frame:end_frame]
+                # current_input_embeds_parts.append(audio_segment_embeds)
+                # current_labels_parts.append(torch.full((audio_segment_embeds.shape[0],), -100, dtype=torch.long, device=prompt_ids.device))
+                
+                # last_text_idx = chunk_idx + 1
+
+                # 裁剪出原始的音频特征片段
+                speech_segment_features = encoder_output[start_frame:end_frame]
+                
+                # 获取对应的说话人嵌入
+                speaker_embed = current_speaker_embeds[j]
+                
+                # --- 调用 GatedCrossAttention ---
+                # 输入: (Batch=1, SeqLen, Dim), (Batch=1, Dim)
+                fused_segment_features = self.gated_attention(
+                    speech_features=speech_segment_features.unsqueeze(0),
+                    speaker_embedding=speaker_embed.unsqueeze(0)
+                ).squeeze(0) # 移除Batch维度
+                
+                # 将融合后的特征通过适配器
+                projected_audio_embeds = self.adapter(fused_segment_features)
+                
+                current_input_embeds_parts.append(projected_audio_embeds)
+                current_labels_parts.append(torch.full((projected_audio_embeds.shape[0],), -100, dtype=torch.long, device=prompt_ids.device))
                 
                 last_text_idx = chunk_idx + 1
 

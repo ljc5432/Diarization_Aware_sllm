@@ -107,18 +107,37 @@ class DataCollator:
         # 2. 构建 Prompt 和 Label 的 Token ID 列表
         batch_prompt_ids = []
         batch_label_ids = []
+        # --- 新增 ---
+        batch_speaker_embeddings = [] # 用于存储每个语音片段对应的说话人嵌入
+        # ------------
         eos_token = self.tokenizer.eos_token
 
         for sample in features:
             # --- 构建 Prompt ---
             # 这是输入给模型的指令部分
             prompt_parts = ["请根据提供的音频片段和说话人信息，转写以下对话。\n"]
+            # --- 新增 ---
+            current_sample_speaker_embeds = []
+            # ------------
             for triplet in sample["triplets"]:
                 prompt_parts.append(f"说话人: {triplet['speaker_id']}, 时间: {triplet['start']:.2f}s - {triplet['end']:.2f}s <audio_chunk>\n")
+                # --- 新增 ---
+                # 为每个triplet(即每个<audio_chunk>)记录其对应的说话人嵌入
+                speaker_id = triplet['speaker_id']
+                current_sample_speaker_embeds.append(sample['speaker_embeddings'][speaker_id])
+                # ------------
             prompt_parts.append("转写结果为：")
             prompt_text = "".join(prompt_parts)
             prompt_ids = self.tokenizer(prompt_text, add_special_tokens=False).input_ids
             batch_prompt_ids.append(torch.tensor(prompt_ids))
+
+            # --- 新增 ---
+            # 将当前样本的所有说话人嵌入堆叠成一个Tensor
+            if current_sample_speaker_embeds:
+                batch_speaker_embeddings.append(torch.stack(current_sample_speaker_embeds))
+            else: # 处理没有triplets的边缘情况
+                batch_speaker_embeddings.append(torch.empty(0))
+            # ------------
 
             # --- 构建 Label ---
             # 这是模型需要生成的目标部分
@@ -144,6 +163,8 @@ class DataCollator:
             "prompt_ids": padded_prompt_ids,
             "label_ids": padded_label_ids,
             "audio_features": padded_audio_features,
-            "triplets_list": [f['triplets'] for f in features]
+            "triplets_list": [f['triplets'] for f in features],
+            # --- 新增返回项 ---
+            "speaker_embeddings_list": batch_speaker_embeddings
         }
 
